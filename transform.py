@@ -122,9 +122,6 @@ def build_students(diagnostics: list[dict], rounds: list[dict]) -> list[dict]:
             "overall_report_url": labels.report_url(d.get("final_report_token")),
             "is_provisional": is_provisional,
             "rounds": round_records,
-            # holistic text (only present on completed diagnostics)
-            "holistic_strengths": final.get("holistic_strengths") or [],
-            "holistic_improvements": final.get("holistic_improvements") or [],
         }
         students.append(record)
 

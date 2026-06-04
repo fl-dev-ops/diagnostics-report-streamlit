@@ -36,7 +36,7 @@ def score_cell(total, label) -> str:
 def stat(col, label: str, value: str) -> None:
     """Compact stat (smaller than st.metric) so text values don't truncate."""
     col.markdown(
-        f"<div style='line-height:1.25'>"
+        f"<div style='line-height:1.25;margin-bottom:0.9rem'>"
         f"<div style='font-size:0.78rem;color:#808495'>{label}</div>"
         f"<div style='font-size:1.35rem;font-weight:600'>{value}</div></div>",
         unsafe_allow_html=True,
@@ -133,20 +133,29 @@ for s in filtered:
         "Band": s["selected_band"] or "—",
     }
     if show_overall:
-        ov = "—" if s["overall"] is None else f"{s['overall']:.1f} ({s['overall_label']}{'*' if s['is_provisional'] else ''})"
-        row["Overall"] = ov
+        row["Readiness Score"] = None if s["overall"] is None else round(s["overall"], 1)
+        row["Readiness"] = (
+            "—" if s["overall"] is None
+            else f"{s['overall_label']}{'*' if s['is_provisional'] else ''}"
+        )
     for rt in visible_round_types:
         rr = s["rounds"][rt]
-        row[rr["short"]] = score_cell(rr["total"], rr["total_label"])
-        row[f"{rr['short']} report"] = rr["report_url"]
+        disp = rr["display"]
+        row[f"{disp} Total Score"] = score_cell(rr["total"], rr["total_label"])
+        row[f"{disp} Language Score"] = score_cell(rr["language_avg"], rr.get("language_label", "—"))
+        row[f"{disp} Thinking Score"] = score_cell(rr["thinking_avg"], rr.get("thinking_label", "—"))
+        row[f"{disp} Confidence Score"] = score_cell(rr["confidence_avg"], rr.get("confidence_label", "—"))
+        row[f"{disp} report"] = rr["report_url"]
     rows.append(row)
 
 df = pd.DataFrame(rows)
 
 col_config: dict = {}
+if show_overall:
+    col_config["Readiness Score"] = st.column_config.NumberColumn("Readiness Score", format="%.1f")
 for rt in visible_round_types:
-    short = labels.ROUND_SHORT[rt]
-    col_config[f"{short} report"] = st.column_config.LinkColumn(f"{short} report", display_text="open")
+    disp = labels.ROUND_DISPLAY[rt]
+    col_config[f"{disp} report"] = st.column_config.LinkColumn(f"{disp} report", display_text="open")
 
 st.caption("`*` = provisional overall (not all 4 rounds completed yet).")
 st.dataframe(df, use_container_width=True, hide_index=True, column_config=col_config)
@@ -196,10 +205,6 @@ if show_overall:
         d3.markdown(f"**Confidence:** {fmt(s['overall_confidence'])} ({labels.dimension_label(s['overall_confidence'])})")
         if s["is_provisional"]:
             st.caption("Provisional — computed from completed rounds; final report not generated yet.")
-        if s["holistic_strengths"]:
-            st.markdown("**Strengths:** " + " · ".join(s["holistic_strengths"]))
-        if s["holistic_improvements"]:
-            st.markdown("**Improvements:** " + " · ".join(s["holistic_improvements"]))
 
 # Rounds
 for rt in visible_round_types:
