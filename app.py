@@ -1,0 +1,229 @@
+"""Diagnostics cohort report dashboard (read-only)."""
+
+from __future__ import annotations
+
+import pandas as pd
+import streamlit as st
+
+import db
+import labels
+import transform
+
+st.set_page_config(page_title="Diagnostics Cohort Report", layout="wide")
+
+
+@st.cache_data(ttl=300, show_spinner="Loading diagnostics from DB…")
+def load_students() -> list[dict]:
+    diagnostics = db.fetch_diagnostics()
+    rounds = db.fetch_rounds()
+    return transform.build_students(diagnostics, rounds)
+
+
+def fmt(value) -> str:
+    if value is None:
+        return "—"
+    if isinstance(value, float):
+        return f"{value:.1f}"
+    return str(value)
+
+
+def score_cell(total, label) -> str:
+    if total is None:
+        return "—"
+    return f"{total:.1f} ({label})"
+
+
+def stat(col, label: str, value: str) -> None:
+    """Compact stat (smaller than st.metric) so text values don't truncate."""
+    col.markdown(
+        f"<div style='line-height:1.25'>"
+        f"<div style='font-size:0.78rem;color:#808495'>{label}</div>"
+        f"<div style='font-size:1.35rem;font-weight:600'>{value}</div></div>",
+        unsafe_allow_html=True,
+    )
+
+
+# ----------------------------------------------------------------------------- data
+try:
+    students = load_students()
+except Exception as exc:  # surface connection/query errors clearly
+    st.error(f"Failed to load data: {exc}")
+    st.stop()
+
+ALL_ROUND_DISPLAYS = [labels.ROUND_DISPLAY[rt] for rt in labels.ROUND_TYPES]
+SECTION_OPTIONS = ["Overall"] + ALL_ROUND_DISPLAYS
+
+# ----------------------------------------------------------------------------- sidebar
+st.sidebar.title("Filters")
+
+search = st.sidebar.text_input("Search name / email").strip().lower()
+
+status_filter = st.sidebar.multiselect(
+    "Diagnostic status", ["COMPLETED", "IN_PROGRESS"], default=[]
+)
+
+rounds_count_filter = st.sidebar.multiselect(
+    "Number of rounds completed", [0, 1, 2, 3, 4], default=[],
+    help="e.g. pick 4 for students who completed all rounds, 3 for three rounds.",
+)
+
+specific_rounds = st.sidebar.multiselect(
+    "Completed specific rounds (all selected)", ALL_ROUND_DISPLAYS, default=[],
+    help="Student must have a ready report for every round selected here.",
+)
+
+visible_sections = st.sidebar.multiselect(
+    "Round sections to display", SECTION_OPTIONS, default=SECTION_OPTIONS,
+)
+
+readiness_filter = st.sidebar.multiselect(
+    "Readiness label", ["No Hire", "Hold", "Hire", "Strong Hire"], default=[]
+)
+
+band_filter = st.sidebar.multiselect(
+    "Target band", ["band1", "band2", "band3"], default=[]
+)
+
+score_range = st.sidebar.slider("Overall score range", 0, 100, (0, 100))
+
+# map selected display names -> round_type
+specific_round_types = [rt for rt in labels.ROUND_TYPES if labels.ROUND_DISPLAY[rt] in specific_rounds]
+visible_round_types = [rt for rt in labels.ROUND_TYPES if labels.ROUND_DISPLAY[rt] in visible_sections]
+show_overall = "Overall" in visible_sections
+
+# ----------------------------------------------------------------------------- filter
+def keep(s: dict) -> bool:
+    if search:
+        hay = f"{s['name']} {s.get('email') or ''}".lower()
+        if search not in hay:
+            return False
+    if status_filter and s["status"] not in status_filter:
+        return False
+    if rounds_count_filter and s["rounds_completed"] not in rounds_count_filter:
+        return False
+    if specific_round_types and not all(rt in s["completed_types"] for rt in specific_round_types):
+        return False
+    if readiness_filter and s["overall_label"] not in readiness_filter:
+        return False
+    if band_filter and s["selected_band"] not in band_filter:
+        return False
+    if s["overall"] is not None and not (score_range[0] <= s["overall"] <= score_range[1]):
+        return False
+    return True
+
+
+filtered = [s for s in students if keep(s)]
+
+# ----------------------------------------------------------------------------- header
+st.title("Diagnostics Cohort Report")
+c1, c2, c3 = st.columns(3)
+c1.metric("Students (filtered)", len(filtered))
+c2.metric("Total diagnostics", len(students))
+c3.metric("Completed all 4 rounds", sum(1 for s in students if s["rounds_completed"] == 4))
+
+# ----------------------------------------------------------------------------- table
+st.subheader("Cohort overview")
+
+rows = []
+for s in filtered:
+    row = {
+        "Name": s["name"],
+        "Status": s["status"],
+        "Rounds": f"{s['rounds_completed']}/4",
+        "Band": s["selected_band"] or "—",
+    }
+    if show_overall:
+        ov = "—" if s["overall"] is None else f"{s['overall']:.1f} ({s['overall_label']}{'*' if s['is_provisional'] else ''})"
+        row["Overall"] = ov
+    for rt in visible_round_types:
+        rr = s["rounds"][rt]
+        row[rr["short"]] = score_cell(rr["total"], rr["total_label"])
+        row[f"{rr['short']} report"] = rr["report_url"]
+    rows.append(row)
+
+df = pd.DataFrame(rows)
+
+col_config: dict = {}
+for rt in visible_round_types:
+    short = labels.ROUND_SHORT[rt]
+    col_config[f"{short} report"] = st.column_config.LinkColumn(f"{short} report", display_text="open")
+
+st.caption("`*` = provisional overall (not all 4 rounds completed yet).")
+st.dataframe(df, use_container_width=True, hide_index=True, column_config=col_config)
+
+# ----------------------------------------------------------------------------- drill-down
+st.subheader("Student detail")
+
+if not filtered:
+    st.info("No students match the current filters.")
+    st.stop()
+
+options = {f"{s['name']} — {s['status']} ({s['rounds_completed']}/4)": s for s in filtered}
+chosen_key = st.selectbox("Select a student", list(options.keys()))
+s = options[chosen_key]
+
+# Identity
+st.markdown("### Identity")
+i1, i2, i3 = st.columns(3)
+with i1:
+    st.markdown(f"**Name:** {s['name']}")
+    st.markdown(f"**Email:** {fmt(s.get('email'))}")
+    st.markdown(f"**Phone:** {fmt(s.get('phone'))}")
+with i2:
+    st.markdown(f"**Institution:** {fmt(s.get('institution'))}")
+    st.markdown(f"**Degree / Stream:** {fmt(s.get('degree'))} / {fmt(s.get('stream'))}")
+    st.markdown(f"**English level:** {fmt(s.get('english_level'))}")
+with i3:
+    st.markdown(f"**Target band:** {s['band_label']}")
+    st.markdown(f"**Target role:** {fmt(s.get('job_title'))}")
+    if s.get("job_companies"):
+        st.markdown(f"**Target companies:** {', '.join(s['job_companies'])}")
+
+# Overall
+if show_overall:
+    st.markdown("### Overall Diagnostic")
+    if s["overall"] is None:
+        st.info("No rounds completed yet — no overall readiness.")
+    else:
+        o1, o2, o3, o4 = st.columns(4)
+        stat(o1, "Readiness score", f"{s['overall']:.1f}")
+        stat(o2, "Readiness", f"{s['overall_emoji']} {s['overall_label']}")
+        stat(o3, "Salary band", s["overall_salary_band"])
+        stat(o4, "Rounds completed", f"{s['rounds_completed']}/4")
+        d1, d2, d3 = st.columns(3)
+        d1.markdown(f"**Language:** {fmt(s['overall_language'])} ({labels.dimension_label(s['overall_language'])})")
+        d2.markdown(f"**Thinking:** {fmt(s['overall_thinking'])} ({labels.dimension_label(s['overall_thinking'])})")
+        d3.markdown(f"**Confidence:** {fmt(s['overall_confidence'])} ({labels.dimension_label(s['overall_confidence'])})")
+        if s["is_provisional"]:
+            st.caption("Provisional — computed from completed rounds; final report not generated yet.")
+        if s["holistic_strengths"]:
+            st.markdown("**Strengths:** " + " · ".join(s["holistic_strengths"]))
+        if s["holistic_improvements"]:
+            st.markdown("**Improvements:** " + " · ".join(s["holistic_improvements"]))
+
+# Rounds
+for rt in visible_round_types:
+    rr = s["rounds"][rt]
+    icon = "✅" if rr["completed"] else "⬜"
+    with st.expander(f"{icon} {rr['display']} round", expanded=False):
+        if not rr["completed"]:
+            st.caption("Not taken yet.")
+            continue
+        m1, m2, m3, m4 = st.columns(4)
+        stat(m1, f"Total ({rr['total_label']})", f"{rr['total']:.1f}")
+        stat(m2, f"Language ({rr['language_label']})", fmt(rr["language_avg"]))
+        stat(m3, f"Thinking ({rr['thinking_label']})", fmt(rr["thinking_avg"]))
+        stat(m4, f"Confidence ({rr['confidence_label']})", fmt(rr["confidence_avg"]))
+        st.markdown(
+            f"**Label:** {rr['total_label']}  ·  **Salary band:** {rr['salary_band']}  ·  "
+            f"**Lang/Think/Conf:** {rr['language_label']} / {rr['thinking_label']} / {rr['confidence_label']}"
+        )
+        link_bits = []
+        if rr["report_url"]:
+            link_bits.append(f"[Report]({rr['report_url']})")
+        if rr["video_url"]:
+            link_bits.append(f"[Video]({rr['video_url']})")
+        if rr["audio_url"]:
+            link_bits.append(f"[Audio]({rr['audio_url']})")
+        if link_bits:
+            st.markdown("  ·  ".join(link_bits))
