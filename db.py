@@ -43,7 +43,7 @@ SELECT
     d."selectedJob"            AS selected_job,
     d."finalReport"            AS final_report,
     d."finalReportShareToken"  AS final_report_token,
-    d."createdAt"              AS created_at
+    u."createdAt"              AS created_at
 FROM diagnostic d
 JOIN "user" u   ON u.id = d."userId"
 LEFT JOIN profile p ON p."userId" = d."userId"

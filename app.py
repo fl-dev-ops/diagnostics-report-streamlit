@@ -86,6 +86,16 @@ band_filter = st.sidebar.multiselect(
 
 score_range = st.sidebar.slider("Overall score range", 0, 100, (0, 100))
 
+# Date range over diagnostic created_at.
+_dates = [s["created_at"].date() for s in students if s.get("created_at")]
+date_range = None
+if _dates:
+    _min, _max = min(_dates), max(_dates)
+    date_range = st.sidebar.date_input(
+        "Created date range", value=(_min, _max), min_value=_min, max_value=_max,
+        help="Filter students by the date their diagnostic was created.",
+    )
+
 # map selected display names -> round_type
 specific_round_types = [rt for rt in labels.ROUND_TYPES if labels.ROUND_DISPLAY[rt] in specific_rounds]
 visible_round_types = [rt for rt in labels.ROUND_TYPES if labels.ROUND_DISPLAY[rt] in visible_sections]
@@ -109,6 +119,10 @@ def keep(s: dict) -> bool:
         return False
     if s["overall"] is not None and not (score_range[0] <= s["overall"] <= score_range[1]):
         return False
+    if isinstance(date_range, (tuple, list)) and len(date_range) == 2:
+        created = s.get("created_at")
+        if created is None or not (date_range[0] <= created.date() <= date_range[1]):
+            return False
     return True
 
 
@@ -129,6 +143,7 @@ for s in filtered:
     row = {
         "Name": s["name"],
         "Status": s["status"],
+        "Created": s["created_at"].date().isoformat() if s.get("created_at") else "—",
         "Rounds": f"{s['rounds_completed']}/4",
         "Band": s["selected_band"] or "—",
     }
