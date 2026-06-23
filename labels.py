@@ -13,8 +13,6 @@ code; we use a consistent banding that reproduces the reference spreadsheet.
 
 from __future__ import annotations
 
-import os
-
 # roundType (DB) -> display name. Order matches roundNumber 1..4.
 ROUND_TYPES = ["screening", "behavioural", "technical-thinking", "career-readiness"]
 
@@ -97,17 +95,13 @@ def salary_band(total_score: float | None) -> str:
     return "₹3.5-15 LPA"
 
 
-def base_url() -> str:
-    return os.environ.get("REPORT_BASE_URL", "https://diagnostics.intervoo.ai").rstrip("/")
-
-
-def report_url(share_token: str | None) -> str | None:
+def report_url(share_token: str | None, base: str) -> str | None:
     if not share_token:
         return None
-    return f"{base_url()}/d/{share_token}"
+    return f"{base.rstrip('/')}/d/{share_token}"
 
 
-def recording_url(session_id: str | None) -> str | None:
+def recording_url(session_id: str | None, base: str) -> str | None:
     if not session_id:
         return None
-    return f"{base_url()}/session/{session_id}/recording"
+    return f"{base.rstrip('/')}/session/{session_id}/recording"

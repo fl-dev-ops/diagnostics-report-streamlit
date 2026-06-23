@@ -7,7 +7,7 @@ from typing import Any
 import labels
 
 
-def _round_record(raw: dict | None, round_type: str) -> dict:
+def _round_record(raw: dict | None, round_type: str, base_url: str) -> dict:
     """Normalize one round into a display-ready dict. `raw` is None if not taken."""
     short = labels.ROUND_SHORT[round_type]
     if not raw or raw.get("report_token") is None:
@@ -44,14 +44,14 @@ def _round_record(raw: dict | None, round_type: str) -> dict:
         "confidence_label": labels.dimension_label(raw.get("confidence_avg")),
         # Prefer the stored band; fall back to deriving from the total.
         "salary_band": raw.get("salary_band") or labels.salary_band(total),
-        "report_url": labels.report_url(raw.get("report_token")),
+        "report_url": labels.report_url(raw.get("report_token"), base_url),
         "video_url": raw.get("video_url"),
         "audio_url": raw.get("audio_url"),
-        "recording_url": labels.recording_url(raw.get("session_id")),
+        "recording_url": labels.recording_url(raw.get("session_id"), base_url),
     }
 
 
-def build_students(diagnostics: list[dict], rounds: list[dict]) -> list[dict]:
+def build_students(diagnostics: list[dict], rounds: list[dict], base_url: str) -> list[dict]:
     """Return one rich record per diagnostic, rounds pivoted into 4 slots."""
     rounds_by_diag: dict[str, dict[str, dict]] = {}
     for r in rounds:
@@ -61,7 +61,7 @@ def build_students(diagnostics: list[dict], rounds: list[dict]) -> list[dict]:
     for d in diagnostics:
         diag_rounds = rounds_by_diag.get(d["diag_id"], {})
         round_records = {
-            rt: _round_record(diag_rounds.get(rt), rt) for rt in labels.ROUND_TYPES
+            rt: _round_record(diag_rounds.get(rt), rt, base_url) for rt in labels.ROUND_TYPES
         }
 
         completed_types = [rt for rt in labels.ROUND_TYPES if round_records[rt]["completed"]]
@@ -119,7 +119,7 @@ def build_students(diagnostics: list[dict], rounds: list[dict]) -> list[dict]:
             "overall_thinking": overall_think,
             "overall_confidence": overall_conf,
             "overall_salary_band": overall_band,
-            "overall_report_url": labels.report_url(d.get("final_report_token")),
+            "overall_report_url": labels.report_url(d.get("final_report_token"), base_url),
             "is_provisional": is_provisional,
             "rounds": round_records,
         }

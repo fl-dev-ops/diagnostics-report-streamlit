@@ -6,7 +6,7 @@ defensive measure (session is set to READ ONLY).
 
 from __future__ import annotations
 
-import os
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import psycopg2
 import psycopg2.extras
@@ -14,12 +14,36 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+_DATABASE_CLIENT_QUERY_PARAMETERS = {
+    "advancedSafeModeLevel",
+    "driverVersion",
+    "env",
+    "lazyload",
+    "name",
+    "safeModeLevel",
+    "statusColor",
+    "tLSMode",
+    "usePrivateKey",
+}
 
-def _connect():
-    url = os.environ.get("DATABASE_URL")
+
+def _sanitize_url(url: str) -> str:
+    """Remove database-client UI metadata that libpq cannot parse."""
+    parts = urlsplit(url)
+    query = urlencode(
+        [
+            (key, value)
+            for key, value in parse_qsl(parts.query, keep_blank_values=True)
+            if key not in _DATABASE_CLIENT_QUERY_PARAMETERS
+        ]
+    )
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, query, parts.fragment))
+
+
+def _connect(url: str):
     if not url:
-        raise RuntimeError("DATABASE_URL is not set (see .env.example)")
-    conn = psycopg2.connect(url)
+        raise RuntimeError("Database URL is not set (see .env.example)")
+    conn = psycopg2.connect(_sanitize_url(url))
     conn.set_session(readonly=True, autocommit=True)
     return conn
 
@@ -75,9 +99,38 @@ LEFT JOIN report r ON r."sessionId" = s.id AND r.status = 'READY'
 ORDER BY dr."diagnosticId", dr."roundNumber";
 """
 
+_PROD_REPORTS_SQL = """
+SELECT
+    r.id                    AS report_id,
+    r."shareToken"          AS report_token,
+    r."completedAt"         AS report_completed_at,
+    d.id                    AS diag_id,
+    d.status                AS diagnostic_status,
+    d."selectedBand"        AS selected_band,
+    d."createdAt"           AS diagnostic_created_at,
+    u.name                  AS name,
+    u.email                 AS email,
+    u."phoneNumber"         AS phone,
+    p.institution           AS institution,
+    p.degree                AS degree,
+    p.stream                AS stream,
+    dr."roundNumber"        AS round_number,
+    dr."roundType"          AS round_type,
+    r."reportJson"          AS report_json
+FROM report r
+JOIN interview_session s ON s.id = r."sessionId"
+JOIN diagnostic_round dr ON dr."sessionId" = s.id
+JOIN diagnostic d ON d.id = dr."diagnosticId"
+JOIN "user" u ON u.id = d."userId"
+LEFT JOIN profile p ON p."userId" = u.id
+WHERE r.status = 'READY'
+  AND r."reportJson" IS NOT NULL
+ORDER BY r."completedAt" DESC NULLS LAST, u.name, dr."roundNumber";
+"""
 
-def _fetch(sql: str) -> list[dict]:
-    conn = _connect()
+
+def _fetch(url: str, sql: str) -> list[dict]:
+    conn = _connect(url)
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(sql)
@@ -86,9 +139,13 @@ def _fetch(sql: str) -> list[dict]:
         conn.close()
 
 
-def fetch_diagnostics() -> list[dict]:
-    return _fetch(_DIAGNOSTICS_SQL)
+def fetch_diagnostics(url: str) -> list[dict]:
+    return _fetch(url, _DIAGNOSTICS_SQL)
 
 
-def fetch_rounds() -> list[dict]:
-    return _fetch(_ROUNDS_SQL)
+def fetch_rounds(url: str) -> list[dict]:
+    return _fetch(url, _ROUNDS_SQL)
+
+
+def fetch_prod_reports(url: str) -> list[dict]:
+    return _fetch(url, _PROD_REPORTS_SQL)

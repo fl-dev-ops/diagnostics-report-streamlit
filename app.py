@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import pandas as pd
 import streamlit as st
 
@@ -11,12 +13,34 @@ import transform
 
 st.set_page_config(page_title="Diagnostics Cohort Report", layout="wide")
 
+DEV_REPORT_BASE_URL = os.environ.get(
+    "DEV_REPORT_BASE_URL", "https://dev.diagnostics.intervoo.ai"
+)
+PROD_REPORT_BASE_URL = os.environ.get(
+    "PROD_REPORT_BASE_URL", "https://diagnostics.intervoo.ai"
+)
+
 
 @st.cache_data(ttl=300, show_spinner="Loading diagnostics from DB…")
-def load_students() -> list[dict]:
-    diagnostics = db.fetch_diagnostics()
-    rounds = db.fetch_rounds()
-    return transform.build_students(diagnostics, rounds)
+def load_dev() -> list[dict]:
+    url = os.environ.get("DEV_DATABASE_URL")
+    if not url:
+        raise RuntimeError("DEV_DATABASE_URL is not set (see .env.example)")
+    diagnostics = db.fetch_diagnostics(url)
+    rounds = db.fetch_rounds(url)
+    return transform.build_students(diagnostics, rounds, DEV_REPORT_BASE_URL)
+
+
+@st.cache_data(ttl=300, show_spinner="Loading production reports from DB…")
+def load_prod_reports() -> list[dict]:
+    url = os.environ.get("PROD_DATABASE_URL")
+    if not url:
+        raise RuntimeError("PROD_DATABASE_URL is not set (see .env.example)")
+    if not hasattr(db, "fetch_prod_reports"):
+        raise RuntimeError(
+            "app.py and db.py are out of sync. Deploy the current db.py and restart Streamlit."
+        )
+    return db.fetch_prod_reports(url)
 
 
 def fmt(value) -> str:
@@ -43,9 +67,141 @@ def stat(col, label: str, value: str) -> None:
     )
 
 
-# ----------------------------------------------------------------------------- data
+def render_text_content(value, heading: str | None = None) -> None:
+    """Render only string content from a nested report value."""
+    if isinstance(value, str):
+        if value.strip():
+            if heading:
+                st.markdown(f"**{heading}**")
+            st.write(value)
+        return
+
+    if isinstance(value, dict):
+        for key, child in value.items():
+            render_text_content(child, key.replace("_", " ").title())
+        return
+
+    if isinstance(value, list):
+        if heading:
+            st.markdown(f"**{heading}**")
+        for child in value:
+            render_text_content(child)
+
+
+def text_list(value) -> str:
+    """Join report text arrays for compact table display."""
+    if not isinstance(value, list):
+        return ""
+    return "\n".join(str(item) for item in value if isinstance(item, str) and item.strip())
+
+
+# ----------------------------------------------------------------------------- env toggle
+env = st.sidebar.segmented_control(
+    "Environment", ["Prod", "Dev"], default="Prod", selection_mode="single"
+) or "Prod"
+st.sidebar.divider()
+
+if env == "Prod":
+    st.title("Diagnostics Reports — Prod")
+    try:
+        reports = load_prod_reports()
+    except Exception as exc:
+        st.error(f"Failed to load data: {exc}")
+        st.stop()
+
+    if not reports:
+        st.info("No completed reports found.")
+        st.stop()
+
+    search = st.text_input("Search name / email").strip().lower()
+    round_filter = st.multiselect(
+        "Round",
+        [labels.ROUND_DISPLAY[round_type] for round_type in labels.ROUND_TYPES],
+        default=[],
+    )
+
+    filtered_reports = []
+    for report in reports:
+        round_name = labels.ROUND_DISPLAY.get(
+            report["round_type"], report["round_type"] or f"Round {report['round_number']}"
+        )
+        haystack = f"{report['name'] or ''} {report['email'] or ''}".lower()
+        if search and search not in haystack:
+            continue
+        if round_filter and round_name not in round_filter:
+            continue
+        filtered_reports.append(report)
+
+    rows = []
+    for report in filtered_reports:
+        content = report["report_json"] or {}
+        rows.append(
+            {
+                "Name": report["name"] or "(no name)",
+                "Email": report["email"] or "—",
+                "Phone": report["phone"] or "—",
+                "Institution": report["institution"] or "—",
+                "Degree / Stream": " / ".join(
+                    value for value in (report["degree"], report["stream"]) if value
+                )
+                or "—",
+                "Diagnostic Status": report["diagnostic_status"],
+                "Band": report["selected_band"] or "—",
+                "Round": labels.ROUND_DISPLAY.get(
+                    report["round_type"],
+                    report["round_type"] or f"Round {report['round_number']}",
+                ),
+                "Report Completed": report["report_completed_at"],
+                "Education Summary": content.get("education_summary", ""),
+                "Aspiration": content.get("aspiration_statement", ""),
+                "Reality": content.get("reality_statement", ""),
+                "Strengths": text_list(content.get("strengths")),
+                "Improvement Areas": text_list(content.get("improvement_areas")),
+                "Report": (
+                    f"{PROD_REPORT_BASE_URL.rstrip('/')}/d/{report['report_token']}"
+                    if report["report_token"]
+                    else None
+                ),
+            }
+        )
+
+    st.caption(f"{len(filtered_reports)} of {len(reports)} completed reports")
+    st.dataframe(
+        pd.DataFrame(rows),
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Report": st.column_config.LinkColumn("Report", display_text="open"),
+            "Report Completed": st.column_config.DatetimeColumn(
+                "Report Completed", format="YYYY-MM-DD HH:mm"
+            ),
+        },
+    )
+
+    if not filtered_reports:
+        st.info("No reports match the current filters.")
+        st.stop()
+
+    options = {
+        (
+            f"{report['name'] or '(no name)'} — "
+            f"{labels.ROUND_DISPLAY.get(report['round_type'], report['round_type'])} — "
+            f"{report['report_id']}"
+        ): report
+        for report in filtered_reports
+    }
+    selected = st.selectbox("Report text detail", list(options))
+    report = options[selected]
+    report_json = report["report_json"] or {}
+    for field, value in report_json.items():
+        if field == "assessment_result":
+            continue
+        render_text_content(value, field.replace("_", " ").title())
+    st.stop()
+
+# ----------------------------------------------------------------------------- data (Dev)
 try:
-    students = load_students()
+    students = load_dev()
 except Exception as exc:  # surface connection/query errors clearly
     st.error(f"Failed to load data: {exc}")
     st.stop()
@@ -129,7 +285,7 @@ def keep(s: dict) -> bool:
 filtered = [s for s in students if keep(s)]
 
 # ----------------------------------------------------------------------------- header
-st.title("Diagnostics Cohort Report")
+st.title("Diagnostics Cohort Report — Dev")
 c1, c2, c3 = st.columns(3)
 c1.metric("Students (filtered)", len(filtered))
 c2.metric("Total diagnostics", len(students))

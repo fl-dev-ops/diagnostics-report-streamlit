@@ -1,12 +1,13 @@
 # Diagnostics Report — Streamlit Dashboard
 
-Read-only Streamlit dashboard that reproduces the per-student diagnostic report
-(Overall readiness + Screening / Behavioural / Tech Thinking / Career Readiness rounds)
-directly from the diagnostics Postgres DB, with filters by round and round-completion.
+Read-only Streamlit app with separate Prod and Dev views.
 
 The app **only issues `SELECT` queries** — it never writes to the database.
 
 ## What it shows
+
+The Dev view reproduces the per-student diagnostic report directly from the
+diagnostics Postgres DB, with filters by round and round-completion:
 
 For every student with a diagnostic:
 
@@ -36,7 +37,7 @@ Dependencies are managed with [uv](https://docs.astral.sh/uv/).
 cd diagnostics-report-streamlit
 uv sync                 # creates .venv and installs from pyproject.toml / uv.lock
 
-cp .env.example .env    # then set DATABASE_URL (reuse the diagnostics app value) + REPORT_BASE_URL
+cp .env.example .env    # set PROD_DATABASE_URL + PROD_REPORT_BASE_URL (and DEV_* when ready)
 
 uv run streamlit run app.py
 ```
@@ -46,5 +47,8 @@ uv run streamlit run app.py
 - Per-round scores come pre-computed from `report.metadata -> 'hydratedReport' ->
   'assessment_result'` (no scoring is recomputed here).
 - Overall readiness comes from `diagnostic.finalReport` when present.
-- Report links: `{REPORT_BASE_URL}/d/{shareToken}`; recordings:
-  `{REPORT_BASE_URL}/session/{sessionId}/recording`; audio/video are direct S3 URLs.
+- Dev report links: `{DEV_REPORT_BASE_URL}/d/{shareToken}`; recordings:
+  `{DEV_REPORT_BASE_URL}/session/{sessionId}/recording`; audio/video are direct S3 URLs.
+- Use the **Environment** toggle in the sidebar to switch between Prod and Dev.
+  Prod displays a searchable table of completed reports with student/profile
+  details and narrative report fields; Dev keeps the full cohort dashboard.
