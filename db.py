@@ -48,7 +48,7 @@ def _connect(url: str):
     return conn
 
 
-# One row per diagnostic, joined to its user + profile.
+# One row per diagnostic, joined to its user.
 _DIAGNOSTICS_SQL = """
 SELECT
     d.id                       AS diag_id,
@@ -56,11 +56,11 @@ SELECT
     u.name                     AS name,
     u.email                    AS email,
     u."phoneNumber"            AS phone,
-    p.institution              AS institution,
-    p.degree                   AS degree,
-    p.stream                   AS stream,
-    p."yearOfStudy"            AS year_of_study,
-    p."englishLevel"           AS english_level,
+    NULL::text                 AS institution,
+    NULL::text                 AS degree,
+    NULL::text                 AS stream,
+    NULL::text                 AS year_of_study,
+    NULL::text                 AS english_level,
     d.status                   AS status,
     d."currentRound"           AS current_round,
     d."selectedBand"           AS selected_band,
@@ -70,7 +70,6 @@ SELECT
     u."createdAt"              AS created_at
 FROM diagnostic d
 JOIN "user" u   ON u.id = d."userId"
-LEFT JOIN profile p ON p."userId" = d."userId"
 ORDER BY u.name;
 """
 
