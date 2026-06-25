@@ -162,6 +162,8 @@ if env == "Prod":
                     if report["report_token"]
                     else None
                 ),
+                "Video": report["video_url"],
+                "Audio": report["audio_url"],
             }
         )
 
@@ -175,6 +177,8 @@ if env == "Prod":
             "Report Completed": st.column_config.DatetimeColumn(
                 "Report Completed", format="YYYY-MM-DD HH:mm"
             ),
+            "Video": st.column_config.LinkColumn("Video", display_text="open"),
+            "Audio": st.column_config.LinkColumn("Audio", display_text="open"),
         },
     )
 

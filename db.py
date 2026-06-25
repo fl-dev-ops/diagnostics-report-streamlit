@@ -115,7 +115,9 @@ SELECT
     p.stream                AS stream,
     dr."roundNumber"        AS round_number,
     dr."roundType"          AS round_type,
-    r."reportJson"          AS report_json
+    r."reportJson"          AS report_json,
+    s."videoUrl"            AS video_url,
+    s."audioUrl"            AS audio_url
 FROM report r
 JOIN interview_session s ON s.id = r."sessionId"
 JOIN diagnostic_round dr ON dr."sessionId" = s.id
